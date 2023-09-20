@@ -105,8 +105,88 @@ def start_cron():
     Inicia el cron que se encarga de ejecutar la función analyze_data cada 5 minutos.
     '''
     print("Iniciando cron...")
-    schedule.every(5).minutes.do(analyze_data)
+    schedule.every(1).minutes.do(analyze_data_luminosidad)
     print("Servicio de control iniciado")
     while 1:
         schedule.run_pending()
         time.sleep(1)
+
+
+
+
+def analyze_data_luminosidad():
+    # Consulta todos los datos de la última hora, los agrupa por estación y variable
+    # Compara el promedio con los valores límite que están en la base de datos para esa variable.
+    # Si el promedio se excede de los límites, se envia un mensaje de alerta.
+
+    print("Calculando alertas luminosidad......")
+   
+    data = Data.objects.filter(measurement_id=3,
+        base_time__gte=datetime.now() - timedelta(minutes=2))
+    aggregation = data.annotate(check_value=Avg('avg_value')) \
+        .select_related('station', 'measurement') \
+        .select_related('station__user', 'station__location') \
+        .select_related('station__location__city', 'station__location__state',
+                        'station__location__country') \
+        .values('check_value', 'station__user__username',
+                'measurement__name',
+                'measurement__max_value',
+                'measurement__min_value',
+                'station__location__city__name',
+                'station__location__state__name',
+                'station__location__country__name')
+   
+
+
+    '''data=Data.objects.filter(measurement_id=3, base_time__hour=current_hour).values('measurement_id__name').annotate(    # filtro por  por año
+        fecha='base_time'  # Trunca la fecha y hora a solo la fecha
+        ).values('fecha','station','measurement_id__name').annotate(    # Realiza agrupacion 'group by'
+        promedio=Avg('avg_value'),Max=Max('max_value'),Min=Min('min_value')  # Calcula el promedio de los puntos para cada fecha
+    ).order_by('fecha')  # Ordenacion por Fecha
+    '''
+    aggregation = data.annotate(check_value=Avg('avg_value')) \
+        .select_related('station', 'measurement') \
+        .select_related('station__user', 'station__location') \
+        .select_related('station__location__city', 'station__location__state',
+                        'station__location__country') \
+        .values('check_value', 'station__user__username',
+                'measurement__name',
+                'measurement__max_value',
+                'measurement__min_value',
+                'station__location__city__name',
+                'station__location__state__name',
+                'station__location__country__name')
+
+    print(aggregation)
+
+    alerts = 0
+    for item in aggregation:
+        alert = False
+
+        variable = item["measurement__name"]
+        max_value = item["measurement__max_value"] or 0
+        min_value = item["measurement__min_value"] or 0
+
+        country = item['station__location__country__name']
+        state = item['station__location__state__name']
+        city = item['station__location__city__name']
+        user = item['station__user__username']
+
+        if item["check_value"] > max_value or item["check_value"] < min_value:
+            alert = True
+
+        if alert:
+            message = "ALERT {} {} {}".format(variable, min_value, max_value)
+            topic = '{}/{}/{}/{}/in'.format(country, state, city, user)
+            print(datetime.now(), "Sending alert to {} {}".format(topic, variable))
+            client.publish(topic, message)
+            alerts += 1
+
+    print(len(aggregation), "dispositivos revisados")
+    print(alerts, "alertas enviadas")
+
+
+
+    
+
+
